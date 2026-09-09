@@ -1,7 +1,7 @@
 // ==========================================================================
 // Retell AI Voice Agent Configuration (Real Retell Integration)
 // ==========================================================================
-const RETELL_PUBLIC_KEY = 'public_key_102d795b07c9abf641c80';
+const RETELL_PUBLIC_KEY = 'public_key_ebc83689d64905bbb7177';
 const RETELL_AGENT_ID = 'agent_ebca8fce123b3233986fd23e18';
 
 let activeRetellSession = null;
@@ -500,33 +500,48 @@ async function startRetellCall() {
         const RetellClientClass = window.RetellClient || (window.retellClientJsSdk && window.retellClientJsSdk.RetellClient);
         
         if (RetellClientClass) {
-            const client = new RetellClientClass({ key: RETELL_PUBLIC_KEY });
-            const session = client.createWebCall({ agent_id: RETELL_AGENT_ID });
-            activeRetellSession = session;
-            isCallConnecting = false;
+            try {
+                const client = new RetellClientClass({ key: RETELL_PUBLIC_KEY });
+                const session = client.createWebCall({
+                    agent_id: RETELL_AGENT_ID,
+                    hooks: {
+                        onCallStarted: () => updateCallUI('connected'),
+                        onAgentStartTalking: () => updateCallUI('agent_speaking'),
+                        onAgentStopTalking: () => updateCallUI('user_speaking'),
+                        onCallEnded: () => {
+                            cleanupCallState();
+                            updateCallUI('ended');
+                            setTimeout(() => closeVoiceModal(), 1800);
+                        },
+                        onError: (err) => {
+                            console.error('Retell session hook error:', err);
+                            updateCallUI('error');
+                            cleanupCallState();
+                        }
+                    }
+                });
+                activeRetellSession = session;
+                isCallConnecting = false;
 
-            session.on('call_started', () => {
-                updateCallUI('connected');
-            });
-            session.on('agent_start_talking', () => {
-                updateCallUI('agent_speaking');
-            });
-            session.on('agent_stop_talking', () => {
-                updateCallUI('user_speaking');
-            });
-            session.on('call_ended', () => {
-                cleanupCallState();
-                updateCallUI('ended');
-                setTimeout(() => {
-                    closeVoiceModal();
-                }, 1800);
-            });
-            session.on('error', (err) => {
-                console.error('Retell session error:', err);
-                updateCallUI('error');
-                cleanupCallState();
-            });
-            return;
+                if (session && typeof session.on === 'function') {
+                    session.on('call_started', () => updateCallUI('connected'));
+                    session.on('agent_start_talking', () => updateCallUI('agent_speaking'));
+                    session.on('agent_stop_talking', () => updateCallUI('user_speaking'));
+                    session.on('call_ended', () => {
+                        cleanupCallState();
+                        updateCallUI('ended');
+                        setTimeout(() => closeVoiceModal(), 1800);
+                    });
+                    session.on('error', (err) => {
+                        console.error('Retell session error:', err);
+                        updateCallUI('error');
+                        cleanupCallState();
+                    });
+                }
+                return;
+            } catch (sdkErr) {
+                console.warn('RetellClient direct call threw, falling back to direct API connection:', sdkErr);
+            }
         }
 
         // Method B: Direct LiveKit connection with Retell Web Call API
@@ -564,6 +579,7 @@ async function startRetellCall() {
                     const audioElement = track.attach();
                     audioElement.autoplay = true;
                     document.body.appendChild(audioElement);
+                    audioElement.play().catch(e => console.warn('Audio play error:', e));
                 }
             });
 
