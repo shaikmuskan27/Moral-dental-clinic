@@ -1,7 +1,7 @@
 // ==========================================================================
 // Retell AI Voice Agent Configuration (Real Retell Integration)
 // ==========================================================================
-const RETELL_PUBLIC_KEY = 'public_key_ebc83689d64905bbb7177';
+const RETELL_PUBLIC_KEY = 'public_key_0def5b029babfe09b6fc9';
 const RETELL_AGENT_ID = 'agent_ebca8fce123b3233986fd23e18';
 
 let activeRetellSession = null;
@@ -470,8 +470,8 @@ async function startRetellCall() {
         voiceModal.classList.add('flex');
     }
 
-    if (activeRetellSession || activeLivekitRoom || isCallConnecting) {
-        return; // Already connecting or in call
+    if (activeRetellSession || isCallConnecting) {
+        return; // Already in a call or connecting
     }
 
     isCallConnecting = true;
@@ -484,156 +484,100 @@ async function startRetellCall() {
     updateCallUI('connecting');
 
     try {
-        // First check microphone permission
+        // 1. Check microphone permission
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             try {
                 await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch (micErr) {
-                console.warn('Microphone permission warning:', micErr);
+                console.warn('Microphone permission denied:', micErr);
+                isCallConnecting = false;
                 updateCallUI('error', translations[currentLang]['modal.mic_error']);
-                isCallConnecting = false;
                 return;
             }
         }
 
-        // Method A: Check for RetellClient from retell-client-js-sdk (v3)
-        const RetellClientClass = window.RetellClient || (window.retellClientJsSdk && window.retellClientJsSdk.RetellClient);
-        
-        if (RetellClientClass) {
-            try {
-                const client = new RetellClientClass({ key: RETELL_PUBLIC_KEY });
-                const session = client.createWebCall({
-                    agent_id: RETELL_AGENT_ID,
-                    hooks: {
-                        onCallStarted: () => updateCallUI('connected'),
-                        onAgentStartTalking: () => updateCallUI('agent_speaking'),
-                        onAgentStopTalking: () => updateCallUI('user_speaking'),
-                        onCallEnded: () => {
-                            cleanupCallState();
-                            updateCallUI('ended');
-                            setTimeout(() => closeVoiceModal(), 1800);
-                        },
-                        onError: (err) => {
-                            console.error('Retell session hook error:', err);
-                            updateCallUI('error');
-                            cleanupCallState();
-                        }
-                    }
-                });
-                activeRetellSession = session;
-                isCallConnecting = false;
+        // 2. Initialize RetellClient from SDK
+        const RetellClientClass = window.RetellClient || 
+            (window.retellClientJsSdk && window.retellClientJsSdk.RetellClient);
 
-                if (session && typeof session.on === 'function') {
-                    session.on('call_started', () => updateCallUI('connected'));
-                    session.on('agent_start_talking', () => updateCallUI('agent_speaking'));
-                    session.on('agent_stop_talking', () => updateCallUI('user_speaking'));
-                    session.on('call_ended', () => {
-                        cleanupCallState();
-                        updateCallUI('ended');
-                        setTimeout(() => closeVoiceModal(), 1800);
-                    });
-                    session.on('error', (err) => {
-                        console.error('Retell session error:', err);
-                        updateCallUI('error');
-                        cleanupCallState();
-                    });
-                }
-                return;
-            } catch (sdkErr) {
-                console.warn('RetellClient direct call threw, falling back to direct API connection:', sdkErr);
-            }
+        if (!RetellClientClass) {
+            throw new Error('Retell WebClient SDK is not loaded. Please ensure retell-client.bundle.js is included.');
         }
 
-        // Method B: Direct LiveKit connection with Retell Web Call API
-        const createCallResponse = await fetch('https://api.retellai.com/v2/create-web-call', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${RETELL_PUBLIC_KEY}`
-            },
-            body: JSON.stringify({ agent_id: RETELL_AGENT_ID })
+        const client = new RetellClientClass({
+            key: RETELL_PUBLIC_KEY
         });
 
-        if (!createCallResponse.ok) {
-            throw new Error(`Retell API error: ${createCallResponse.statusText}`);
-        }
-
-        const callData = await createCallResponse.json();
-        const accessToken = callData.access_token;
-        const livekitUrl = callData.url || 'wss://livekit.retellai.com';
-
-        if (window.LivekitClient && window.LivekitClient.Room) {
-            const room = new window.LivekitClient.Room({
-                adaptiveStream: true,
-                dynacast: true
-            });
-            activeLivekitRoom = room;
-
-            room.on(window.LivekitClient.RoomEvent.Connected, async () => {
-                updateCallUI('connected');
-                await room.localParticipant.setMicrophoneEnabled(true);
-            });
-
-            room.on(window.LivekitClient.RoomEvent.TrackSubscribed, (track) => {
-                if (track.kind === 'audio') {
-                    const audioElement = track.attach();
-                    audioElement.autoplay = true;
-                    document.body.appendChild(audioElement);
-                    audioElement.play().catch(e => console.warn('Audio play error:', e));
-                }
-            });
-
-            room.on(window.LivekitClient.RoomEvent.ActiveSpeakersChanged, (speakers) => {
-                const isAgentSpeaking = speakers.some(s => s.identity !== room.localParticipant.identity);
-                if (isAgentSpeaking) {
+        // 3. Create Web Call adhering to Retell SDK specs
+        const call = client.createWebCall({
+            agent_id: RETELL_AGENT_ID,
+            transcript: true,
+            hooks: {
+                onStatus: (status) => {
+                    console.log('Retell Call Status:', status);
+                    if (status === 'live') {
+                        isCallConnecting = false;
+                        updateCallUI('connected');
+                    } else if (status === 'ended') {
+                        cleanupCallState();
+                        updateCallUI('ended');
+                        setTimeout(() => {
+                            closeVoiceModal();
+                        }, 1800);
+                    }
+                },
+                onAgentStartTalking: () => {
                     updateCallUI('agent_speaking');
-                } else {
+                },
+                onAgentStopTalking: () => {
                     updateCallUI('user_speaking');
-                }
-            });
-
-            room.on(window.LivekitClient.RoomEvent.Disconnected, () => {
-                cleanupCallState();
-                updateCallUI('ended');
-                setTimeout(() => {
-                    closeVoiceModal();
-                }, 1800);
-            });
-
-            await room.connect(livekitUrl, accessToken);
-            isCallConnecting = false;
-        } else {
-            // Method C: RetellWebClient legacy fallback
-            const LegacyClient = window.RetellWebClient || (window.retellClientJsSdk && window.retellClientJsSdk.RetellWebClient);
-            if (LegacyClient) {
-                const webClient = new LegacyClient();
-                activeRetellSession = webClient;
-                isCallConnecting = false;
-                
-                webClient.on('call_started', () => updateCallUI('connected'));
-                webClient.on('call_ended', () => {
+                },
+                onTranscript: (transcript) => {
+                    if (Array.isArray(transcript) && transcript.length > 0) {
+                        const lastTurn = transcript[transcript.length - 1];
+                        if (lastTurn && lastTurn.content) {
+                            const statusText = document.getElementById('voice-status-text');
+                            if (statusText) statusText.textContent = lastTurn.content;
+                        }
+                    }
+                },
+                onError: (err) => {
+                    console.error('Retell call error:', err);
+                    cleanupCallState();
+                    let msg = (err && err.message) || translations[currentLang]['modal.conn_error'];
+                    if (msg.toLowerCase().includes('domain') || msg.toLowerCase().includes('origin') || msg.toLowerCase().includes('unauthorized')) {
+                        msg = currentLang === 'ar'
+                            ? 'يرجى إضافة النطاق (localhost) إلى Allowed Domains في إعدادات Public Key داخل لوحة تحكم Retell'
+                            : 'Please add "localhost" to Allowed Domains in Retell Dashboard -> Public Key settings.';
+                    }
+                    updateCallUI('error', msg);
+                },
+                onEnd: () => {
+                    console.log('Retell call ended');
                     cleanupCallState();
                     updateCallUI('ended');
-                    setTimeout(() => closeVoiceModal(), 1800);
-                });
-                webClient.on('agent_start_talking', () => updateCallUI('agent_speaking'));
-                webClient.on('agent_stop_talking', () => updateCallUI('user_speaking'));
-                webClient.on('error', (err) => {
-                    console.error('Retell error:', err);
-                    updateCallUI('error');
-                    cleanupCallState();
-                });
-
-                await webClient.startCall({ accessToken });
-            } else {
-                throw new Error('Retell SDK and LiveKit client could not be initialized.');
+                    setTimeout(() => {
+                        closeVoiceModal();
+                    }, 1800);
+                }
             }
+        });
+
+        activeRetellSession = call;
+
+        // Start browser audio playback
+        try {
+            if (call && typeof call.startAudioPlayback === 'function') {
+                await call.startAudioPlayback();
+            }
+        } catch (audioErr) {
+            console.warn('Audio playback note:', audioErr);
         }
+
     } catch (error) {
         console.error('Failed to start Retell voice call:', error);
-        isCallConnecting = false;
         cleanupCallState();
-        updateCallUI('error', translations[currentLang]['modal.conn_error']);
+        updateCallUI('error', error.message || translations[currentLang]['modal.conn_error']);
     }
 }
 
@@ -648,18 +592,15 @@ window.openVoiceModal = () => {
 };
 
 window.closeVoiceModal = async () => {
-    if (activeRetellSession && typeof activeRetellSession.end === 'function') {
+    if (activeRetellSession) {
         try {
-            await activeRetellSession.end();
+            if (typeof activeRetellSession.end === 'function') {
+                await activeRetellSession.end();
+            } else if (typeof activeRetellSession.stopCall === 'function') {
+                await activeRetellSession.stopCall();
+            }
         } catch (e) {
-            console.warn('Error ending session:', e);
-        }
-    }
-    if (activeLivekitRoom && typeof activeLivekitRoom.disconnect === 'function') {
-        try {
-            await activeLivekitRoom.disconnect();
-        } catch (e) {
-            console.warn('Error disconnecting room:', e);
+            console.warn('Error stopping Retell call:', e);
         }
     }
     cleanupCallState();
@@ -678,18 +619,28 @@ window.toggleMute = async () => {
     const muteLabel = document.getElementById('mute-label');
 
     if (activeRetellSession) {
-        if (window.isMuted) {
-            activeRetellSession.mute?.();
-        } else {
-            activeRetellSession.unmute?.();
-        }
-    }
-
-    if (activeLivekitRoom && activeLivekitRoom.localParticipant) {
         try {
-            await activeLivekitRoom.localParticipant.setMicrophoneEnabled(!window.isMuted);
+            // SDK method if available
+            if (window.isMuted) {
+                if (typeof activeRetellSession.mute === 'function') {
+                    activeRetellSession.mute();
+                }
+            } else {
+                if (typeof activeRetellSession.unmute === 'function') {
+                    activeRetellSession.unmute();
+                }
+            }
+
+            // Direct transport / media track control
+            if (activeRetellSession.transport && typeof activeRetellSession.transport.setMicEnabled === 'function') {
+                activeRetellSession.transport.setMicEnabled(!window.isMuted);
+            } else if (activeRetellSession.transport && activeRetellSession.transport.localStream) {
+                activeRetellSession.transport.localStream.getAudioTracks().forEach(t => {
+                    t.enabled = !window.isMuted;
+                });
+            }
         } catch (e) {
-            console.warn('Error toggling mic:', e);
+            console.warn('Error toggling mute state:', e);
         }
     }
 
