@@ -16,6 +16,17 @@ const translations = {
         "header.clinic_name": "عيادات مولر",
         "header.clinic_sub": "Molar Clinics • Riyadh",
 
+        // Navigation Drawer
+        "menu.book_btn": "حجز موعد جديد",
+        "menu.voice_btn": "تحدث مع الاستقبال (سارة AI)",
+        "menu.services": "خدماتنا وتخصصاتنا",
+        "menu.about": "عن عيادات مولر",
+        "menu.location": "الموقع وساعات العمل",
+        "menu.call": "اتصال مباشر: 0570707029",
+        "menu.whatsapp": "محادثة واتساب سريعة",
+        "menu.hours_label": "ساعات العمل:",
+        "menu.hours_val": "حتى 12 منتصف الليل",
+
         // Hero
         "hero.badge_open": "مفتوح الآن · حتى 12 منتصف الليل",
         "hero.badge_location": "ظهرة لبن، الرياض",
@@ -155,6 +166,17 @@ const translations = {
         "header.menu_aria": "Clinic Menu",
         "header.clinic_name": "Molar Clinics",
         "header.clinic_sub": "Molar Clinics • Riyadh",
+
+        // Navigation Drawer
+        "menu.book_btn": "Book an Appointment",
+        "menu.voice_btn": "Talk to Reception (Sarah AI)",
+        "menu.services": "Our Services & Specialties",
+        "menu.about": "About Molar Clinics",
+        "menu.location": "Location & Hours",
+        "menu.call": "Direct Call: 0570707029",
+        "menu.whatsapp": "Quick WhatsApp Chat",
+        "menu.hours_label": "Opening Hours:",
+        "menu.hours_val": "Until 12:00 AM Midnight",
 
         // Hero
         "hero.badge_open": "Open Now · Until 12 Midnight",
@@ -613,6 +635,49 @@ window.closeVoiceModal = async () => {
     updateModalLanguageLabels();
 };
 
+// ==========================================================================
+// Navigation Drawer Functions (Three lines menu)
+// ==========================================================================
+window.openDrawer = () => {
+    const drawer = document.getElementById('nav-drawer');
+    const panel = document.getElementById('nav-drawer-panel');
+    if (!drawer || !panel) return;
+
+    drawer.classList.remove('hidden');
+    // Force DOM reflow so transition starts from initial translated position
+    void drawer.offsetWidth;
+
+    drawer.classList.remove('opacity-0', 'pointer-events-none');
+    drawer.classList.add('opacity-100', 'pointer-events-auto');
+    drawer.setAttribute('aria-hidden', 'false');
+
+    panel.classList.remove('-translate-x-full', 'rtl:translate-x-full');
+    panel.classList.add('translate-x-0');
+
+    document.body.classList.add('overflow-hidden');
+};
+
+window.closeDrawer = () => {
+    const drawer = document.getElementById('nav-drawer');
+    const panel = document.getElementById('nav-drawer-panel');
+    if (!drawer || !panel) return;
+
+    drawer.classList.remove('opacity-100', 'pointer-events-auto');
+    drawer.classList.add('opacity-0', 'pointer-events-none');
+    drawer.setAttribute('aria-hidden', 'true');
+
+    panel.classList.remove('translate-x-0');
+    panel.classList.add('-translate-x-full', 'rtl:translate-x-full');
+
+    document.body.classList.remove('overflow-hidden');
+
+    setTimeout(() => {
+        if (drawer.getAttribute('aria-hidden') === 'true') {
+            drawer.classList.add('hidden');
+        }
+    }, 300);
+};
+
 window.toggleMute = async () => {
     window.isMuted = !window.isMuted;
     const muteIcon = document.getElementById('mute-icon');
@@ -733,13 +798,51 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Connect ALL Voice Buttons to REAL Retell Voice Agent ---
-    const voiceTriggers = document.querySelectorAll('[data-path="retell-ai-voice"], button[aria-label*="المساعد الذكي"], button[onclick="openVoiceModal()"]');
+    const voiceTriggers = document.querySelectorAll('[data-path="retell-ai-voice"], button[aria-label*="المساعد الذكي"], button[onclick*="openVoiceModal"]');
     voiceTriggers.forEach(btn => {
-        btn.onclick = null; // Clear inline handler
         btn.addEventListener('click', (e) => {
-            e.preventDefault();
+            if (typeof window.closeDrawer === 'function') {
+                window.closeDrawer();
+            }
             startRetellCall();
         });
+    });
+
+    // --- Navigation Drawer Controls ---
+    const menuToggleBtn = document.getElementById('menu-toggle-btn');
+    if (menuToggleBtn) {
+        menuToggleBtn.addEventListener('click', () => {
+            window.openDrawer();
+        });
+    }
+
+    const closeDrawerBtn = document.getElementById('close-drawer-btn');
+    if (closeDrawerBtn) {
+        closeDrawerBtn.addEventListener('click', () => {
+            window.closeDrawer();
+        });
+    }
+
+    const drawerBackdrop = document.getElementById('nav-drawer-backdrop');
+    if (drawerBackdrop) {
+        drawerBackdrop.addEventListener('click', () => {
+            window.closeDrawer();
+        });
+    }
+
+    // Close drawer when any link inside it is clicked
+    document.querySelectorAll('#nav-drawer a').forEach(link => {
+        link.addEventListener('click', () => {
+            window.closeDrawer();
+        });
+    });
+
+    // Global ESC key listener for modals & drawer
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            window.closeDrawer();
+            window.closeVoiceModal();
+        }
     });
 
     // --- Booking Form Logic ---
